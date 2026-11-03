@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>CareNotes · Sign in</title>
+	<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+	<main class="auth-wrap">
+		<div class="card auth-card">
+			<div class="brand"><span class="brand-mark">+</span> CareNotes</div>
+			<p class="muted" style="text-align:center">Visit notes, medications and mood check-ins between your psychiatry appointments.</p>
+
+			<div class="tabs">
+				<button type="button" class="tab active" data-tab="login">Sign in</button>
+				<button type="button" class="tab" data-tab="register">New patient</button>
+			</div>
+
+			<div id="message" class="message" hidden></div>
+
+			<form id="login-form">
+				<div class="field">
+					<label for="login-email">Email</label>
+					<input id="login-email" type="email" required autocomplete="email">
+				</div>
+				<div class="field">
+					<label for="login-password">Password</label>
+					<input id="login-password" type="password" required autocomplete="current-password">
+				</div>
+				<button type="submit" class="btn-block">Sign in</button>
+			</form>
+
+			<form id="register-form" hidden>
+				<div class="row">
+					<div class="field">
+						<label for="reg-first">First name</label>
+						<input id="reg-first" required>
+					</div>
+					<div class="field">
+						<label for="reg-last">Last name</label>
+						<input id="reg-last" required>
+					</div>
+				</div>
+				<div class="field">
+					<label for="reg-email">Email</label>
+					<input id="reg-email" type="email" required autocomplete="email">
+				</div>
+				<div class="row">
+					<div class="field">
+						<label for="reg-mobile">Mobile number</label>
+						<input id="reg-mobile" required>
+					</div>
+					<div class="field">
+						<label for="reg-dob">Date of birth</label>
+						<input id="reg-dob" type="date">
+					</div>
+				</div>
+				<div class="field">
+					<label for="reg-password">Password <span class="field-hint">(at least 8 characters)</span></label>
+					<input id="reg-password" type="password" minlength="8" required autocomplete="new-password">
+				</div>
+				<button type="submit" class="btn-block">Create account</button>
+			</form>
+
+			<div class="demo-box" style="margin-top:1.25rem">
+				<strong>Demo accounts</strong> (password <code>Demo1234!</code>)<br>
+				Psychiatrist: <code>doctor@demo.com</code><br>
+				Patient: <code>patient@demo.com</code>
+			</div>
+		</div>
+	</main>
+
+	<script src="app.js"></script>
+	<script>
+		const message = document.getElementById("message");
+		const loginForm = document.getElementById("login-form");
+		const registerForm = document.getElementById("register-form");
+
+		// Already logged in? Go straight to the right dashboard
+		if(getToken() && getRole()) {
+			window.location.href = getRole() === "doctor" ? "doctor.html" : "patient.html";
+		}
+
+		document.querySelectorAll(".tab").forEach(tab => {
+			tab.addEventListener("click", () => {
+				document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t === tab));
+				loginForm.hidden = tab.dataset.tab !== "login";
+				registerForm.hidden = tab.dataset.tab !== "register";
+				showMessage(message, "");
+			});
+		});
+
+		const login = (email, password) => {
+			return api("/users/login", { method: "POST", body: { email, password } })
+			.then(data => {
+				saveSession(data.access, data.role);
+				window.location.href = data.role === "doctor" ? "doctor.html" : "patient.html";
+			});
+		};
+
+		loginForm.addEventListener("submit", (e) => {
+			e.preventDefault();
+			showMessage(message, "");
+			login(
+				document.getElementById("login-email").value,
+				document.getElementById("login-password").value
+			)
+			.catch(err => showMessage(message, err.message));
+		});
+
+		registerForm.addEventListener("submit", (e) => {
+			e.preventDefault();
+			showMessage(message, "");
+
+			let email = document.getElementById("reg-email").value;
+			let password = document.getElementById("reg-password").value;
+
+			api("/users/register", {
+				method: "POST",
+				body: {
+					firstName: document.getElementById("reg-first").value,
+					lastName: document.getElementById("reg-last").value,
+					email,
+					mobileNo: document.getElementById("reg-mobile").value,
+					dateOfBirth: document.getElementById("reg-dob").value || undefined,
+					password
+				}
+			})
+			.then(() => login(email, password))
+			.catch(err => showMessage(message, err.message));
+		});
+	</script>
+</body>
+</html>

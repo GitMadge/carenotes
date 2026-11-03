@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>CareNotes · My care</title>
+	<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+	<div class="crisis-banner" id="crisis-banner"></div>
+
+	<header class="topbar">
+		<div class="brand"><span class="brand-mark">+</span> CareNotes</div>
+		<div class="topbar-user">
+			<span id="user-name"></span>
+			<button type="button" class="btn-secondary" onclick="logout()">Log out</button>
+		</div>
+	</header>
+
+	<main class="container">
+		<h1 id="greeting">Hello</h1>
+		<p class="muted">Your visit notes, medications and daily check-ins with your psychiatrist.</p>
+
+		<div id="message" class="message" hidden></div>
+
+		<section id="notifications"></section>
+
+		<section id="next-appt"></section>
+
+		<!-- Daily mood check-in -->
+		<form id="checkin-form" class="card">
+			<h2>How are you feeling today?</h2>
+			<p class="muted small">Your psychiatrist reviews these between visits. This is not monitored in real time. For urgent help, use the crisis line at the top.</p>
+
+			<div class="row">
+				<div class="field scale-field">
+					<label for="c-mood">Mood: <span class="scale-value" id="c-mood-value">5</span></label>
+					<input id="c-mood" type="range" min="1" max="10" value="5">
+					<div class="scale-ends"><span>Very low</span><span>Very good</span></div>
+				</div>
+				<div class="field scale-field">
+					<label for="c-anxiety">Anxiety: <span class="scale-value" id="c-anxiety-value">5</span></label>
+					<input id="c-anxiety" type="range" min="1" max="10" value="5">
+					<div class="scale-ends"><span>Calm</span><span>Very anxious</span></div>
+				</div>
+			</div>
+
+			<div class="row">
+				<div class="field">
+					<label for="c-sleep">Hours of sleep last night</label>
+					<input id="c-sleep" type="number" min="0" max="24" step="0.5" placeholder="e.g. 7">
+				</div>
+				<div class="field">
+					<label>&nbsp;</label>
+					<label class="checkbox-label"><input id="c-meds" type="checkbox" checked> I took my medication today</label>
+				</div>
+			</div>
+
+			<div class="field">
+				<label for="c-note">Anything you want your psychiatrist to know? <span class="field-hint">(optional)</span></label>
+				<textarea id="c-note" maxlength="1000" placeholder="e.g. Side effects, a stressful day, sleeping better..."></textarea>
+			</div>
+
+			<button type="submit" id="checkin-btn">Save check-in</button>
+		</form>
+
+		<section class="card">
+			<h2>Your last 30 days</h2>
+			<div id="mood-chart"></div>
+		</section>
+
+		<h2 style="margin-top:1.5rem">Visit notes</h2>
+		<section id="summaries"></section>
+	</main>
+
+	<script src="app.js"></script>
+	<script>
+		requireRole("patient");
+
+		document.getElementById("crisis-banner").innerHTML = CRISIS_HTML;
+
+		const message = document.getElementById("message");
+		const summariesEl = document.getElementById("summaries");
+		const nextApptEl = document.getElementById("next-appt");
+		const notificationsEl = document.getElementById("notifications");
+
+		let summaries = [];
+		// Patients see the plain-language version first; they can switch to the clinical notes
+		let showDoctorNotes = {};
+
+		api("/users/details")
+		.then(user => {
+			document.getElementById("user-name").textContent = `${ user.firstName } ${ user.lastName }`;
+			document.getElementById("greeting").textContent = `Hello, ${ user.firstName }`;
+		})
+		.catch(err => showMessage(message, err.message));
+
+		//[SECTION] Notifications (appointment reminders from the clinic)
+		const loadNotifications = () => {
+			return api("/notifications/mine")
+			.then(data => {
+				notificationsEl.innerHTML = data.filter(n => !n.isRead).map(n => `
+					<div class="card notice">
+						<span class="notice-icon" aria-hidden="true">🔔</span>
+						<div>
+							<p>${ escapeHtml(n.message) }</p>
+							<button type="button" class="btn-secondary" data-dismiss="${ n._id }">Got it</button>
+						</div>
+					</div>
+				`).join("");
+			})
+			.catch(err => showMessage(message, err.message));
+		};
+
+		notificationsEl.addEventListener("click", (e) => {
+			let btn = e.target.closest("[data-dismiss]");
+			if(!btn) return;
+			btn.closest(".notice").remove();
+			api(`/notifications/${ btn.dataset.dismiss }/read`, { method: "PATCH" }).catch(() => {});
+		});
+
+		//[SECTION] Visit summaries
+		const loadSummaries = () => {
+			return api("/summaries/mine")
+			.then(data => {
+				summaries = data;
+				renderNextAppointment();
+				renderSummaries();
+			})
+			.catch(err => showMessage(message, err.message));
+		};
+
+		const renderNextAppointment = () => {
+			let upcoming = summaries
+				.filter(s => s.followUpDate && daysUntil(s.followUpDate) >= 0)
+				.sort((a, b) => new Date(a.followUpDate) - new Date(b.followUpDate))[0];
+
+			if(!upcoming) {
+				nextApptEl.innerHTML = "";
+				return;
+			}
+
+			let date = new Date(upcoming.followUpDate);
+			nextApptEl.innerHTML = `
+				<div class="card next-appt">
+					<div class="date-block">
+						<span class="month">${ date.toLocaleDateString(undefined, { month: "short" }) }</span>
+						<span class="day">${ date.getDate() }</span>
+					</div>
+					<div>
+						<h2 style="margin:0">Next appointment ${ relativeDay(upcoming.followUpDate) } at ${ formatTime(upcoming.followUpDate) }</h2>
+						<p>${ formatDate(upcoming.followUpDate) } · ${ escapeHtml(upcoming.visitType) }</p>
+						<p class="checklist"><strong>Before your visit:</strong> ${ PRE_VISIT_NOTE }</p>
+					</div>
+				</div>
+			`;
+		};
+
+		const renderSummaries = () => {
+			if(summaries.length === 0) {
+				summariesEl.innerHTML = `<div class="card empty">No visit notes yet. They'll appear here after your psychiatrist adds one.</div>`;
+				return;
+			}
+
+			summariesEl.innerHTML = summaries.map(s => {
+				let doctor = s.doctorId ? `Dr. ${ escapeHtml(s.doctorId.lastName) }` : "Your psychiatrist";
+				let doctorView = showDoctorNotes[s._id];
+				let hasPlain = s.plainLanguage && s.plainLanguage.trim();
+
+				return `
+					<article class="card summary-card" data-id="${ s._id }">
+						<div class="summary-head" data-toggle="${ s._id }">
+							<div>
+								<h2>${ escapeHtml(s.visitType) }</h2>
+								<div class="muted small">${ formatDate(s.visitDate) } · ${ doctor }</div>
+							</div>
+							${ s.readByPatient ? "" : `<span class="badge new">New</span>` }
+						</div>
+						<div class="summary-body" id="body-${ s._id }" hidden>
+							${ hasPlain && !doctorView ? `
+								<div class="section-label">What this means for you</div>
+								<div class="plain-box">${ escapeHtml(s.plainLanguage) }</div>
+							` : `
+								<div class="section-label">Diagnosis</div>
+								<p>${ escapeHtml(s.diagnosis) }</p>
+								${ s.nextSteps ? `
+									<div class="section-label">Treatment plan</div>
+									<p>${ escapeHtml(s.nextSteps) }</p>
+								` : "" }
+							` }
+
+							${ s.medications.length ? `
+								<div class="section-label">Your medications</div>
+								<ul class="med-list">
+									${ s.medications.map(m => `
+										<li>
+											<strong>${ escapeHtml(m.name) }</strong>
+											${ m.dosage ? `<span class="badge grey">${ escapeHtml(m.dosage) }</span>` : "" }
+											${ m.instructions ? `<div class="muted small">${ escapeHtml(m.instructions) }</div>` : "" }
+											${ m.sideEffects ? `<div class="small"><strong>Watch for:</strong> ${ escapeHtml(m.sideEffects) }</div>` : "" }
+										</li>
+									`).join("") }
+								</ul>
+							` : "" }
+
+							${ s.followUpDate ? `
+								<div class="section-label">Next appointment</div>
+								<p>${ formatDateTime(s.followUpDate) } (${ relativeDay(s.followUpDate) })</p>
+							` : "" }
+
+							${ hasPlain ? `
+								<button type="button" class="btn-link" data-switch="${ s._id }">
+									${ doctorView ? "Show the simple explanation" : "Show the clinical notes" }
+								</button>
+							` : "" }
+						</div>
+					</article>
+				`;
+			}).join("");
+		};
+
+		summariesEl.addEventListener("click", (e) => {
+			let toggle = e.target.closest("[data-toggle]");
+			let switcher = e.target.closest("[data-switch]");
+
+			if(switcher) {
+				let id = switcher.dataset.switch;
+				showDoctorNotes[id] = !showDoctorNotes[id];
+				renderSummaries();
+				document.getElementById(`body-${ id }`).hidden = false;
+				return;
+			}
+
+			if(toggle) {
+				let id = toggle.dataset.toggle;
+				let body = document.getElementById(`body-${ id }`);
+				body.hidden = !body.hidden;
+
+				let summary = summaries.find(s => s._id === id);
+				if(!body.hidden && !summary.readByPatient) {
+					summary.readByPatient = true;
+					let badge = toggle.querySelector(".badge.new");
+					if(badge) badge.remove();
+					api(`/summaries/${ id }/read`, { method: "PATCH" }).catch(() => {});
+				}
+			}
+		});
+
+		//[SECTION] Mood check-ins
+		const loadCheckIns = () => {
+			return api("/checkins/mine")
+			.then(data => renderMoodChart(document.getElementById("mood-chart"), data))
+			.catch(err => showMessage(message, err.message));
+		};
+
+		["mood", "anxiety"].forEach(key => {
+			let input = document.getElementById(`c-${ key }`);
+			input.addEventListener("input", () => {
+				document.getElementById(`c-${ key }-value`).textContent = input.value;
+			});
+		});
+
+		document.getElementById("checkin-form").addEventListener("submit", (e) => {
+			e.preventDefault();
+
+			let btn = document.getElementById("checkin-btn");
+			btn.disabled = true;
+			let sleep = document.getElementById("c-sleep").value;
+
+			api("/checkins", {
+				method: "POST",
+				body: {
+					mood: Number(document.getElementById("c-mood").value),
+					anxiety: Number(document.getElementById("c-anxiety").value),
+					sleepHours: sleep === "" ? undefined : Number(sleep),
+					tookMedication: document.getElementById("c-meds").checked,
+					note: document.getElementById("c-note").value.trim()
+				}
+			})
+			.then(data => {
+				document.getElementById("c-note").value = "";
+				if(data.lowMood) {
+					showMessage(message, "Thank you for checking in. It sounds like today is hard. If you feel unsafe, please call or text 988 now. You can also call the clinic to talk to someone.", "error");
+				} else {
+					showMessage(message, "Check-in saved. Thank you!", "success");
+				}
+				message.scrollIntoView({ behavior: "smooth", block: "center" });
+				return loadCheckIns();
+			})
+			.catch(err => showMessage(message, err.message))
+			.finally(() => { btn.disabled = false; });
+		});
+
+		loadNotifications();
+		loadCheckIns();
+		loadSummaries().then(() => {
+			// Open the newest summary by default so the patient sees something right away
+			if(summaries.length) {
+				summariesEl.querySelector("[data-toggle]").click();
+			}
+		});
+	</script>
+</body>
+</html>

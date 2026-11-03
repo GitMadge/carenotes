@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>CareNotes · Psychiatrist</title>
+	<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+	<header class="topbar">
+		<div class="brand"><span class="brand-mark">+</span> CareNotes <span class="badge">Psychiatrist</span></div>
+		<div class="topbar-user">
+			<span id="user-name"></span>
+			<button type="button" class="btn-secondary" onclick="logout()">Log out</button>
+		</div>
+	</header>
+
+	<div class="doctor-layout">
+		<aside>
+			<div class="card">
+				<h2>Today's appointments</h2>
+				<p class="muted small">Send patients a same-day reminder, including the insurance check.</p>
+				<ul id="today-list" class="today-list"></ul>
+			</div>
+
+			<div class="card">
+				<h2>Patients</h2>
+				<input id="patient-search" type="search" placeholder="Search by name">
+				<ul id="patient-list" class="patient-list"></ul>
+			</div>
+
+			<div class="card">
+				<h2>Upcoming</h2>
+				<ul id="followup-list" class="followup-list"></ul>
+			</div>
+		</aside>
+
+		<main>
+			<div id="message" class="message" hidden></div>
+
+			<div id="no-patient" class="card empty">Select a patient on the left to see their check-ins and visit notes.</div>
+
+			<div id="patient-view" hidden>
+				<div class="card patient-header">
+					<div>
+						<h1 id="patient-name"></h1>
+						<div id="patient-info" class="muted small"></div>
+					</div>
+					<button type="button" id="new-summary-btn">+ New visit note</button>
+				</div>
+
+				<section class="card">
+					<div class="patient-header">
+						<h2 style="margin:0">Mood check-ins (last 30 days)</h2>
+						<div id="checkin-flags" class="actions"></div>
+					</div>
+					<div id="mood-chart" style="margin-top:0.75rem"></div>
+				</section>
+
+				<form id="summary-form" class="card" hidden>
+					<h2 id="form-title">New visit note</h2>
+
+					<div class="row">
+						<div class="field">
+							<label for="f-visit">Visit date</label>
+							<input id="f-visit" type="date" required>
+						</div>
+						<div class="field">
+							<label for="f-type">Visit type</label>
+							<select id="f-type">
+								<option>Initial evaluation</option>
+								<option>Medication management</option>
+								<option>Therapy session</option>
+								<option selected>Follow-up</option>
+							</select>
+						</div>
+					</div>
+
+					<div class="field">
+						<label for="f-diagnosis">Diagnosis</label>
+						<input id="f-diagnosis" required placeholder="e.g. Generalized anxiety disorder (F41.1)">
+					</div>
+
+					<div class="field">
+						<label>Medications</label>
+						<div id="med-rows"></div>
+						<button type="button" class="btn-secondary" id="add-med-btn">+ Add medication</button>
+					</div>
+
+					<div class="field">
+						<label for="f-next">Treatment plan <span class="field-hint">(visible to the patient under "clinical notes")</span></label>
+						<textarea id="f-next"></textarea>
+					</div>
+
+					<div class="field">
+						<label for="f-plain">Plain-language summary for the patient <span class="field-hint">(shown first on the patient's side)</span></label>
+						<textarea id="f-plain" placeholder="e.g. Your medicine is helping, so we're raising the dose a little..."></textarea>
+					</div>
+
+					<div class="field">
+						<label for="f-private">🔒 Private notes <span class="field-hint">(never shown to the patient)</span></label>
+						<textarea id="f-private" placeholder="Screening scores, safety assessment, observations..."></textarea>
+					</div>
+
+					<div class="field">
+						<label for="f-followup">Next appointment <span class="field-hint">(optional)</span></label>
+						<input id="f-followup" type="datetime-local">
+					</div>
+
+					<div class="actions">
+						<button type="submit" id="save-btn">Save note</button>
+						<button type="button" class="btn-secondary" id="cancel-btn">Cancel</button>
+					</div>
+				</form>
+
+				<section id="summary-list"></section>
+			</div>
+		</main>
+	</div>
+
+	<script src="app.js"></script>
+	<script>
+		requireRole("doctor");
+
+		const message = document.getElementById("message");
+		const form = document.getElementById("summary-form");
+		const medRows = document.getElementById("med-rows");
+
+		let patients = [];
+		let selectedPatient = null;
+		let patientSummaries = [];
+		// null when creating, otherwise the id of the summary being edited
+		let editingId = null;
+
+		api("/users/details")
+		.then(user => {
+			document.getElementById("user-name").textContent = `Dr. ${ user.firstName } ${ user.lastName }`;
+		})
+		.catch(err => showMessage(message, err.message));
+
+		//[SECTION] Patient list
+		const loadPatients = () => {
+			return api("/users/patients")
+			.then(data => {
+				patients = data;
+				renderPatients();
+			})
+			.catch(err => showMessage(message, err.message));
+		};
+
+		const renderPatients = () => {
+			let query = document.getElementById("patient-search").value.toLowerCase();
+			let filtered = patients.filter(p => `${ p.firstName } ${ p.lastName }`.toLowerCase().includes(query));
+
+			document.getElementById("patient-list").innerHTML = filtered.length ? filtered.map(p => `
+				<li>
+					<button type="button" data-patient="${ p._id }" class="${ selectedPatient && selectedPatient._id === p._id ? "active" : "" }">
+						${ escapeHtml(p.lastName) }, ${ escapeHtml(p.firstName) }
+						<span class="muted small">${ escapeHtml(p.email) }</span>
+					</button>
+				</li>
+			`).join("") : `<li class="muted small" style="padding:0.5rem">No patients found</li>`;
+		};
+
+		document.getElementById("patient-search").addEventListener("input", renderPatients);
+
+		document.getElementById("patient-list").addEventListener("click", (e) => {
+			let btn = e.target.closest("[data-patient]");
+			if(btn) selectPatient(btn.dataset.patient);
+		});
+
+		const selectPatient = (id) => {
+			selectedPatient = patients.find(p => p._id === id);
+			if(!selectedPatient) return;
+
+			renderPatients();
+			hideForm();
+			showMessage(message, "");
+
+			document.getElementById("no-patient").hidden = true;
+			document.getElementById("patient-view").hidden = false;
+			document.getElementById("patient-name").textContent = `${ selectedPatient.firstName } ${ selectedPatient.lastName }`;
+			document.getElementById("patient-info").textContent = [
+				selectedPatient.dateOfBirth ? `Born ${ formatDate(selectedPatient.dateOfBirth) }` : null,
+				selectedPatient.mobileNo,
+				selectedPatient.email
+			].filter(Boolean).join(" · ");
+
+			loadSummaries();
+			loadCheckIns();
+		};
+
+		//[SECTION] Today's appointments and upcoming follow-ups
+		const loadFollowUps = () => {
+			return api("/summaries/follow-ups")
+			.then(data => {
+				let today = data.filter(s => daysUntil(s.followUpDate) === 0);
+				let later = data.filter(s => daysUntil(s.followUpDate) > 0);
+				let name = (s) => s.patientId ? escapeHtml(`${ s.patientId.firstName } ${ s.patientId.lastName }`) : "Unknown patient";
+
+				document.getElementById("today-list").innerHTML = today.length ? today.map(s => `
+					<li>
+						<div class="today-row">
+							<button type="button" class="btn-link" data-patient-link="${ s.patientId ? s.patientId._id : "" }">${ name(s) }</button>
+							<strong>${ formatTime(s.followUpDate) }</strong>
+						</div>
+						${ s.reminderSentAt
+							? `<span class="badge">✓ Reminder sent ${ formatTime(s.reminderSentAt) }</span>`
+							: `<button type="button" data-remind="${ s._id }">Send reminder</button>` }
+					</li>
+				`).join("") : `<li class="muted">No appointments today</li>`;
+
+				document.getElementById("followup-list").innerHTML = later.length ? later.map(s => `
+					<li>
+						<button type="button" class="btn-link" data-patient-link="${ s.patientId ? s.patientId._id : "" }">${ name(s) }</button>
+						<span class="muted">${ new Date(s.followUpDate).toLocaleDateString(undefined, { month: "short", day: "numeric" }) }</span>
+					</li>
+				`).join("") : `<li class="muted">None scheduled</li>`;
+			})
+			.catch(err => showMessage(message, err.message));
+		};
+
+		document.querySelector("aside").addEventListener("click", (e) => {
+			let link = e.target.closest("[data-patient-link]");
+			let remind = e.target.closest("[data-remind]");
+
+			if(link && link.dataset.patientLink) {
+				selectPatient(link.dataset.patientLink);
+			}
+
+			if(remind) {
+				remind.disabled = true;
+				api(`/notifications/remind/${ remind.dataset.remind }`, { method: "POST" })
+				.then(() => {
+					showMessage(message, "Reminder sent. The patient will see it when they open the app.", "success");
+					loadFollowUps();
+				})
+				.catch(err => {
+					showMessage(message, err.message);
+					remind.disabled = false;
+				});
+			}
+		});
+
+		//[SECTION] Mood check-ins for the selected patient
+		const loadCheckIns = () => {
+			return api(`/checkins/patient/${ selectedPatient._id }`)
+			.then(data => {
+				renderMoodChart(document.getElementById("mood-chart"), data);
+
+				// Flags from the last 7 days
+				let recent = data.filter(c => daysUntil(c.createdOn) >= -7);
+				let lowMood = recent.filter(c => c.mood <= 3).length;
+				let missed = recent.filter(c => !c.tookMedication).length;
+
+				document.getElementById("checkin-flags").innerHTML = [
+					lowMood ? `<span class="badge alert-chip">⚠ ${ lowMood } low-mood day${ lowMood > 1 ? "s" : "" } this week</span>` : "",
+					missed ? `<span class="badge new">${ missed } missed dose${ missed > 1 ? "s" : "" } this week</span>` : "",
+					!lowMood && !missed && recent.length ? `<span class="badge">No flags this week</span>` : ""
+				].join("");
+			})
+			.catch(err => showMessage(message, err.message));
+		};
+
+		//[SECTION] Visit notes for the selected patient
+		const loadSummaries = () => {
+			return api(`/summaries/patient/${ selectedPatient._id }`)
+			.then(data => {
+				patientSummaries = data;
+				renderSummaries();
+			})
+			.catch(err => showMessage(message, err.message));
+		};
+
+		const renderSummaries = () => {
+			let listEl = document.getElementById("summary-list");
+
+			if(patientSummaries.length === 0) {
+				listEl.innerHTML = `<div class="card empty">No visit notes yet for this patient.</div>`;
+				return;
+			}
+
+			listEl.innerHTML = patientSummaries.map(s => `
+				<article class="card doc-summary">
+					<div class="summary-meta">
+						<div>
+							<h2>${ escapeHtml(s.visitType) }: ${ escapeHtml(s.diagnosis) }</h2>
+							<div class="muted small">
+								Visit ${ formatDate(s.visitDate) }
+								${ s.doctorId ? ` · Dr. ${ escapeHtml(s.doctorId.lastName) }` : "" }
+							</div>
+						</div>
+						<div class="actions">
+							<span class="badge ${ s.readByPatient ? "" : "grey" }">${ s.readByPatient ? "Read by patient" : "Not read yet" }</span>
+							${ s.followUpDate ? `<span class="badge new">Next: ${ formatDateTime(s.followUpDate) }</span>` : "" }
+						</div>
+					</div>
+
+					${ s.medications.length ? `
+						<div class="section-label">Medications</div>
+						<ul class="med-list">
+							${ s.medications.map(m => `
+								<li><strong>${ escapeHtml(m.name) }</strong> ${ escapeHtml(m.dosage) }
+								${ m.instructions ? `<span class="muted small">— ${ escapeHtml(m.instructions) }</span>` : "" }
+								${ m.sideEffects ? `<div class="small"><strong>Watch for:</strong> ${ escapeHtml(m.sideEffects) }</div>` : "" }</li>
+							`).join("") }
+						</ul>
+					` : "" }
+
+					${ s.nextSteps ? `<div class="section-label">Treatment plan</div><p>${ escapeHtml(s.nextSteps) }</p>` : "" }
+					${ s.plainLanguage ? `<div class="section-label">Patient explanation</div><div class="plain-box">${ escapeHtml(s.plainLanguage) }</div>` : "" }
+					${ s.privateNotes ? `<div class="section-label">🔒 Private notes</div><div class="private-box">${ escapeHtml(s.privateNotes) }</div>` : "" }
+
+					<div class="actions">
+						<button type="button" class="btn-secondary" data-edit="${ s._id }">Edit</button>
+						<button type="button" class="btn-danger" data-delete="${ s._id }">Delete</button>
+					</div>
+				</article>
+			`).join("");
+		};
+
+		document.getElementById("summary-list").addEventListener("click", (e) => {
+			let editBtn = e.target.closest("[data-edit]");
+			let deleteBtn = e.target.closest("[data-delete]");
+
+			if(editBtn) {
+				openForm(patientSummaries.find(s => s._id === editBtn.dataset.edit));
+			}
+
+			if(deleteBtn && confirm("Delete this visit note? The patient will no longer see it.")) {
+				api(`/summaries/${ deleteBtn.dataset.delete }`, { method: "DELETE" })
+				.then(() => {
+					showMessage(message, "Visit note deleted.", "success");
+					loadSummaries();
+					loadFollowUps();
+				})
+				.catch(err => showMessage(message, err.message));
+			}
+		});
+
+		//[SECTION] Create / edit form
+		const addMedRow = (med = { name: "", dosage: "", instructions: "", sideEffects: "" }) => {
+			let row = document.createElement("div");
+			row.className = "med-row";
+			row.innerHTML = `
+				<input placeholder="Medication" class="med-name">
+				<input placeholder="Dosage" class="med-dosage">
+				<input placeholder="Instructions (e.g. once a day with food)" class="med-instructions">
+				<button type="button" class="btn-danger" aria-label="Remove medication">✕</button>
+				<input placeholder="Side effects to watch for (shown to patient)" class="med-side" style="grid-column: 1 / -1">
+			`;
+			row.querySelector(".med-name").value = med.name;
+			row.querySelector(".med-dosage").value = med.dosage;
+			row.querySelector(".med-instructions").value = med.instructions;
+			row.querySelector(".med-side").value = med.sideEffects || "";
+			row.querySelector("button").addEventListener("click", () => row.remove());
+			medRows.appendChild(row);
+		};
+
+		const openForm = (summary = null) => {
+			editingId = summary ? summary._id : null;
+			document.getElementById("form-title").textContent = summary ? "Edit visit note" : "New visit note";
+			document.getElementById("save-btn").textContent = summary ? "Save changes" : "Save note";
+
+			document.getElementById("f-visit").value = toInputDate(summary ? summary.visitDate : new Date());
+			document.getElementById("f-type").value = summary ? summary.visitType : "Follow-up";
+			document.getElementById("f-followup").value = toInputDateTime(summary && summary.followUpDate);
+			document.getElementById("f-diagnosis").value = summary ? summary.diagnosis : "";
+			document.getElementById("f-next").value = summary ? summary.nextSteps : "";
+			document.getElementById("f-plain").value = summary ? summary.plainLanguage : "";
+			document.getElementById("f-private").value = summary ? summary.privateNotes : "";
+
+			medRows.innerHTML = "";
+			(summary && summary.medications.length ? summary.medications : [undefined]).forEach(m => addMedRow(m));
+
+			form.hidden = false;
+			form.scrollIntoView({ behavior: "smooth", block: "start" });
+			document.getElementById("f-diagnosis").focus();
+		};
+
+		const hideForm = () => {
+			form.hidden = true;
+			editingId = null;
+		};
+
+		document.getElementById("new-summary-btn").addEventListener("click", () => openForm());
+		document.getElementById("add-med-btn").addEventListener("click", () => addMedRow());
+		document.getElementById("cancel-btn").addEventListener("click", hideForm);
+
+		form.addEventListener("submit", (e) => {
+			e.preventDefault();
+
+			let medications = [...medRows.querySelectorAll(".med-row")]
+				.map(row => ({
+					name: row.querySelector(".med-name").value.trim(),
+					dosage: row.querySelector(".med-dosage").value.trim(),
+					instructions: row.querySelector(".med-instructions").value.trim(),
+					sideEffects: row.querySelector(".med-side").value.trim()
+				}))
+				.filter(m => m.name);
+
+			let followUp = document.getElementById("f-followup").value;
+
+			let body = {
+				patientId: selectedPatient._id,
+				visitDate: document.getElementById("f-visit").value,
+				visitType: document.getElementById("f-type").value,
+				// datetime-local has no timezone, so convert from the browser's local time
+				followUpDate: followUp ? new Date(followUp).toISOString() : null,
+				diagnosis: document.getElementById("f-diagnosis").value.trim(),
+				medications,
+				nextSteps: document.getElementById("f-next").value.trim(),
+				plainLanguage: document.getElementById("f-plain").value.trim(),
+				privateNotes: document.getElementById("f-private").value.trim()
+			};
+
+			let saveBtn = document.getElementById("save-btn");
+			saveBtn.disabled = true;
+
+			api(editingId ? `/summaries/${ editingId }` : "/summaries", {
+				method: editingId ? "PATCH" : "POST",
+				body
+			})
+			.then(() => {
+				showMessage(message, editingId ? "Note updated. The patient will see it as new." : "Note saved. The patient can see it now.", "success");
+				hideForm();
+				loadSummaries();
+				loadFollowUps();
+			})
+			.catch(err => showMessage(message, err.message))
+			.finally(() => { saveBtn.disabled = false; });
+		});
+
+		loadPatients();
+		loadFollowUps();
+	</script>
+</body>
+</html>
