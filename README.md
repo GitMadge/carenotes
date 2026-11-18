@@ -35,7 +35,16 @@ Node.js, Express 5, MongoDB/Mongoose, JWT, plus a vanilla HTML/CSS/JS frontend t
 ## Run it
 
 1. `npm install`
-2. Copy `.env.example` to `.env` and fill it in (the Firebase keys are optional locally)
+2. Create `.env` with these keys (the Firebase keys are optional locally):
+   ```
+   PORT=4000
+   MONGODB_STRING=<your MongoDB connection string, ending in /carenotes?...>
+   JWT_SECRET_KEY=<any long random string>
+   FIREBASE_API_KEY=
+   FIREBASE_AUTH_DOMAIN=
+   FIREBASE_PROJECT_ID=
+   FIREBASE_APP_ID=
+   ```
 3. `npm run seed` to load demo data (this **clears** all users, notes, check-ins and notifications). The seed always puts one appointment on today's date, so you can try the reminder button.
 4. `npm start`, then open http://localhost:4000
 
