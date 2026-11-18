@@ -1,11 +1,16 @@
 {
   "name": "patient-summaries-app",
   "version": "1.0.0",
-  "description": "Follow-up care app for a general practice: doctors write visit summaries, patients read them.",
+  "description": "Follow-up care app for a psychiatric clinic: visit notes, mood check-ins and same-day appointment reminders.",
   "main": "index.js",
+  "type": "commonjs",
   "scripts": {
     "start": "node index.js",
-    "seed": "node seed.js"
+    "seed": "node seed.js",
+    "make-doctor": "node makeDoctor.js"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "keywords": [],
   "author": "nataliemadge",

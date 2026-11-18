@@ -22,6 +22,7 @@ A simple follow-up care app for a psychiatric clinic. The psychiatrist writes vi
 - Visit notes shown in plain language first, with a switch to the clinical notes
 
 **Security**
+- **Sign in with Google** (Firebase Authentication) or email/password
 - Passwords hashed with bcrypt, JWT auth with 8-hour expiry
 - Role checks on every route (`verifyDoctor` / `verifyPatient`)
 - Patients can only read their own notes, check-ins and notifications
@@ -34,16 +35,33 @@ Node.js, Express 5, MongoDB/Mongoose, JWT, plus a vanilla HTML/CSS/JS frontend t
 ## Run it
 
 1. `npm install`
-2. Create `.env`:
-   ```
-   PORT=4000
-   MONGODB_STRING=<your MongoDB connection string>
-   JWT_SECRET_KEY=<any long random string>
-   ```
+2. Copy `.env.example` to `.env` and fill it in (the Firebase keys are optional locally)
 3. `npm run seed` to load demo data (this **clears** all users, notes, check-ins and notifications). The seed always puts one appointment on today's date, so you can try the reminder button.
 4. `npm start`, then open http://localhost:4000
 
 Demo logins (password `Demo1234!`): psychiatrist `doctor@demo.com`; patients `patient@demo.com`, `liza@demo.com`
+
+## Google sign-in (Firebase)
+
+How it works: the login page signs the user in with Google through Firebase. It sends the Firebase ID token to `POST /users/google`. The server checks the token against Google's public keys (`firebaseAuth.js`), finds or creates the user, and returns the app's normal access token. Everything after login works the same as email/password.
+
+- New Google users become **patients**. To make the psychiatrist's Google account a doctor, have them sign in once, then run `npm run make-doctor -- their@gmail.com`.
+- If an email/password account already uses the same (verified) Google email, the two accounts are linked.
+
+Setup:
+1. https://console.firebase.google.com → **Add project**
+2. **Build → Authentication → Get started → Sign-in method → Google → Enable**
+3. **Project settings → Your apps → Web (`</>`)**: register an app and copy `apiKey`, `authDomain`, `projectId`, `appId` into the `FIREBASE_*` env vars
+4. **Authentication → Settings → Authorized domains**: add your Vercel domain (`localhost` is already there)
+
+## Deploy to Vercel
+
+1. **MongoDB Atlas → Network Access**: allow `0.0.0.0/0` (Vercel has no fixed IP address)
+2. Push this repo to GitHub, then go to https://vercel.com/new and import it. There's no framework preset or build command to set, because Vercel detects the Express app from `index.js`.
+3. **Settings → Environment Variables**: add `MONGODB_STRING`, `JWT_SECRET_KEY` and the four `FIREBASE_*` values, then redeploy
+4. Add the `*.vercel.app` domain to Firebase's authorized domains
+
+Static pages in `public/` are served by Vercel's CDN. The API runs as one serverless function.
 
 ## API
 
@@ -51,6 +69,8 @@ Demo logins (password `Demo1234!`): psychiatrist `doctor@demo.com`; patients `pa
 |---|---|---|
 | POST | `/users/register` | anyone (creates a patient) |
 | POST | `/users/login` | anyone |
+| POST | `/users/google` | anyone with a Firebase Google ID token |
+| GET | `/users/firebase-config` | anyone (public Firebase web settings) |
 | GET | `/users/details` | logged in |
 | GET | `/users/patients` | psychiatrist |
 | POST | `/summaries` | psychiatrist |

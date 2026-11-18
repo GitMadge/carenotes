@@ -3,6 +3,7 @@ const User = require('../models/User');
 const bcrypt = require('bcryptjs');
 const auth = require('../auth.js');
 const { errorHandler } = require('../auth');
+const { verifyFirebaseToken } = require('../firebaseAuth');
 
 
 //[SECTION] User Registration
@@ -55,7 +56,8 @@ module.exports.loginUser = (req, res) => {
     .then(result => {
 
         // Same message for unknown email and wrong password so attackers can't tell which accounts exist
-        if(result == null || !bcrypt.compareSync(req.body.password || "", result.password)) {
+        // (Google-only accounts have no password, so they can't log in here)
+        if(result == null || !result.password || !bcrypt.compareSync(req.body.password || "", result.password)) {
             return res.status(401).send({ message: "Incorrect email or password" });
         }
 
@@ -66,6 +68,79 @@ module.exports.loginUser = (req, res) => {
     })
     .catch(error => errorHandler(error, req, res));
 }
+
+
+//[SECTION] Google Sign-in (Firebase)
+/*
+    Steps:
+    1. Verify the Firebase ID token sent by the browser
+    2. Find the user by Google ID or email, or create a new patient
+    3. Send back our own access token so the rest of the app works the same as email/password login
+*/
+module.exports.loginWithGoogle = (req, res) => {
+
+    return verifyFirebaseToken(req.body.idToken)
+    .then(payload => {
+
+        if(!payload.email || !payload.email_verified) {
+            return res.status(401).send({ message: "Your Google email address is not verified" });
+        }
+
+        return User.findOne({ $or: [{ googleUid: payload.sub }, { email: payload.email.toLowerCase() }] })
+        .then(existingUser => {
+
+            if(existingUser) {
+                // First Google sign-in for an existing email: link the Google account
+                if(!existingUser.googleUid) {
+                    existingUser.googleUid = payload.sub;
+                    return existingUser.save();
+                }
+                return existingUser;
+            }
+
+            let names = (payload.name || payload.email.split("@")[0]).trim().split(" ");
+
+            let newUser = new User({
+                firstName : names[0],
+                lastName : names.slice(1).join(" ") || "-",
+                email : payload.email,
+                authProvider : "google",
+                googleUid : payload.sub
+            });
+
+            return newUser.save();
+        })
+        .then(user => res.status(200).send({
+            access : auth.createAccessToken(user),
+            role : user.role
+        }));
+    })
+    .catch(error => {
+        // Bad or expired tokens are the user's problem (401), anything else is a server error
+        if(error.name === "JsonWebTokenError" || error.name === "TokenExpiredError" || error.message.includes("Google sign-in")) {
+            return res.status(401).send({ message: error.message });
+        }
+        errorHandler(error, req, res);
+    });
+};
+
+
+//[SECTION] Public Firebase settings for the login page
+// These values are meant to be public (they identify the Firebase project, they are not secrets)
+module.exports.getFirebaseConfig = (req, res) => {
+
+    if(!process.env.FIREBASE_API_KEY || !process.env.FIREBASE_PROJECT_ID) {
+        return res.status(200).send({ enabled: false });
+    }
+
+    return res.status(200).send({
+        enabled : true,
+        apiKey : process.env.FIREBASE_API_KEY,
+        authDomain : process.env.FIREBASE_AUTH_DOMAIN || `${ process.env.FIREBASE_PROJECT_ID }.firebaseapp.com`,
+        projectId : process.env.FIREBASE_PROJECT_ID,
+        appId : process.env.FIREBASE_APP_ID
+    });
+};
 
 
 //[SECTION] Retrieve user details

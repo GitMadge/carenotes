@@ -25,7 +25,7 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
-// Serves the patient/doctor pages from the "public" folder
+// Serves the patient/doctor pages from the "public" folder locally (on Vercel, public/ is served by its CDN instead)
 app.use(express.static(path.join(__dirname, "public")));
 
 
@@ -46,4 +46,5 @@ if(require.main === module) {
 	});
 };
 
-module.exports = { app, mongoose };
+// Vercel runs the exported app as a serverless function (app.listen above only runs locally)
+module.exports = app;

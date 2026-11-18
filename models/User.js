@@ -15,9 +15,20 @@ const userSchema = new mongoose.Schema({
         lowercase: true,
         trim: true
     },
+    // "local" = email/password, "google" = Firebase Google sign-in
+    authProvider: {
+        type: String,
+        enum: ['local', 'google'],
+        default: 'local'
+    },
+    // Firebase user ID, set the first time someone signs in with Google
+    googleUid: {
+        type: String
+    },
+    // Google accounts have no password in our database
     password: {
         type: String,
-        required: [true, 'Password is Required']
+        required: [function() { return this.authProvider === 'local'; }, 'Password is Required']
     },
     // Public registration always creates patients; doctor accounts come from the seed script
     role: {
@@ -27,7 +38,7 @@ const userSchema = new mongoose.Schema({
     },
     mobileNo: {
         type: String,
-        required: [true, 'Mobile Number is Required']
+        required: [function() { return this.authProvider === 'local'; }, 'Mobile Number is Required']
     },
     dateOfBirth: {
         type: Date

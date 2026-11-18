@@ -11,6 +11,11 @@ router.post("/register", userController.registerUser);
 
 router.post("/login", userController.loginUser);
 
+//[SECTION] Google sign-in through Firebase
+router.post("/google", userController.loginWithGoogle);
+
+router.get("/firebase-config", userController.getFirebaseConfig);
+
 router.get("/details", verify, userController.getProfile);
 
 //[SECTION] Route for the doctor's patient list
